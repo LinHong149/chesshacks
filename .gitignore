@@ -5,4 +5,4 @@ venv
 .env
 devtools
 /devtools
-/best/data/raw_pgn
+/best/chessbot/data

@@ -18,16 +18,42 @@ BOARD_SIZE = 8
 ACTION_SIZE = 64 * 64
 
 # Network / training hyperparams
-CHANNELS = 64
-NUM_RES_BLOCKS = 4
+# Based on research and AlphaZero implementations:
+# 
+# Original AlphaZero (DeepMind, 2017):
+#   - Chess: 256 channels, 20 residual blocks (~40MB)
+#   - This was for maximum strength with extensive compute
+#
+# Leela Chess Zero (Lc0) variants:
+#   - T40: 256 channels, 40 blocks (smaller)
+#   - T60: 256 channels, 60 blocks (medium) 
+#   - T80: 256 channels, 80 blocks (larger)
+#
+# Practical configurations for limited resources:
+#   - Tiny: 32 channels, 2 blocks (~0.5MB) - Fast training, basic play
+#   - Small: 64 channels, 4 blocks (~2-3MB) - Good balance, decent play
+#   - Medium: 128 channels, 6 blocks (~8-10MB) - Strong play, more compute
+#   - Large: 256 channels, 10 blocks (~25-30MB) - Very strong, close to original
+#
+# Research findings:
+#   - Width (channels) has quadratic impact on parameters
+#   - Depth (blocks) has linear impact on parameters
+#   - Optimal depth often 6-10 blocks for chess (diminishing returns after)
+#   - Width of 128-256 channels is common for strong play
+#   - For training efficiency: prefer more width over excessive depth
+#
+# Recommended for your setup (A100 GPU):
+CHANNELS = 32  
+NUM_RES_BLOCKS = 2  
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-BATCH_SIZE = 64
+# Optimized for small model (32 channels, 2 blocks):
+BATCH_SIZE = 256  # Can use larger batches with small model - better GPU utilization
 REPLAY_BUFFER_SIZE = 100_000
 
-NUM_SELFPLAY_GAMES_PER_ITER = 10
-NUM_TRAIN_STEPS_PER_ITER = 100
-MCTS_SIMULATIONS = 200
+NUM_SELFPLAY_GAMES_PER_ITER = 20  # More games per iter since model is small and fast
+NUM_TRAIN_STEPS_PER_ITER = 150  # More training steps since batches are faster
+MCTS_SIMULATIONS = 80  # Reduced for speed - small model doesn't need as many simulations
 CPUCT = 1.5
 
 # ==========================
@@ -401,9 +427,9 @@ def train_step(net: AlphaZeroNet, optimizer, replay_buffer: ReplayBuffer):
         return 0.0, 0.0, 0.0
 
     states, policies, values = replay_buffer.sample(BATCH_SIZE)
-    states = states.to(DEVICE)
-    policies = policies.to(DEVICE)
-    values = values.to(DEVICE)
+    states = states.to(DEVICE, non_blocking=True)  # Non-blocking transfer for speed
+    policies = policies.to(DEVICE, non_blocking=True)
+    values = values.to(DEVICE, non_blocking=True)
 
     net.train()
     optimizer.zero_grad()

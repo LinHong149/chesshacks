@@ -35,16 +35,30 @@ def build_move_index_map(pgn_dir, output_path):
     """Scan all PGNs and collect unique moves"""
     uci_set = set()
 
-    pgn_files = glob.glob(pgn_dir + "/*.zst")
+    # Find both .pgn and .zst files
+    pgn_files = glob.glob(pgn_dir + "/*.zst") + glob.glob(pgn_dir + "/*.pgn")
     print(f"Scanning {len(pgn_files)} PGN files for unique moves...")
 
     for fp in pgn_files:
-        for game in stream_lichess_pgn(fp):
-            if not is_high_quality(game):
-                continue
-
-            for move in game.mainline_moves():
-                uci_set.add(move.uci())
+        if fp.endswith('.zst'):
+            # Compressed file
+            for game in stream_lichess_pgn(fp):
+                if not is_high_quality(game):
+                    continue
+                for move in game.mainline_moves():
+                    uci_set.add(move.uci())
+        else:
+            # Regular PGN file
+            import chess.pgn
+            with open(fp, 'r') as f:
+                while True:
+                    game = chess.pgn.read_game(f)
+                    if game is None:
+                        break
+                    if not is_high_quality(game):
+                        continue
+                    for move in game.mainline_moves():
+                        uci_set.add(move.uci())
 
     uci_list = sorted(list(uci_set))
     move_index_map = {uci: i for i, uci in enumerate(uci_list)}
