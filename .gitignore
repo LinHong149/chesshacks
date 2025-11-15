@@ -5,5 +5,3 @@ venv
 .env
 devtools
 /devtools
-/model
-/modal
