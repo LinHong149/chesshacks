@@ -32,20 +32,48 @@ def load_model(checkpoint_path: str = None):
     if checkpoint_path is None:
         models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
         if os.path.exists(models_dir):
-            checkpoint_files = [
-                f for f in os.listdir(models_dir) 
-                if f.startswith('chessbot_policy_epoch_') and f.endswith('.pth')
-            ]
-            if checkpoint_files:
-                # Get latest checkpoint (highest epoch number)
-                def get_epoch(filename):
-                    try:
-                        return int(filename.split('epoch_')[1].split('.')[0])
-                    except:
-                        return 0
-                checkpoint_files.sort(key=get_epoch, reverse=True)
-                checkpoint_path = os.path.join(models_dir, checkpoint_files[0])
-                print(f"Auto-detected checkpoint: {checkpoint_path}")
+            # Priority order:
+            # 1. v2.pth (if exists)
+            # 2. v1.pth (if exists)
+            # 3. Latest epoch checkpoint
+            # 4. Environment variable MODEL_PATH
+            
+            # Check for v2.pth first
+            v2_path = os.path.join(models_dir, 'v2.pth')
+            if os.path.exists(v2_path):
+                checkpoint_path = v2_path
+                print(f"Auto-detected checkpoint: {checkpoint_path} (v2)")
+            else:
+                # Check for v1.pth
+                v1_path = os.path.join(models_dir, 'v1.pth')
+                if os.path.exists(v1_path):
+                    checkpoint_path = v1_path
+                    print(f"Auto-detected checkpoint: {checkpoint_path} (v1)")
+                else:
+                    # Fall back to epoch-based naming
+                    checkpoint_files = [
+                        f for f in os.listdir(models_dir) 
+                        if f.startswith('chessbot_policy_epoch_') and f.endswith('.pth')
+                    ]
+                    if checkpoint_files:
+                        # Get latest checkpoint (highest epoch number)
+                        def get_epoch(filename):
+                            try:
+                                return int(filename.split('epoch_')[1].split('.')[0])
+                            except:
+                                return 0
+                        checkpoint_files.sort(key=get_epoch, reverse=True)
+                        checkpoint_path = os.path.join(models_dir, checkpoint_files[0])
+                        print(f"Auto-detected checkpoint: {checkpoint_path} (epoch-based)")
+            
+            # Allow override via environment variable
+            env_model_path = os.getenv('MODEL_PATH')
+            if env_model_path:
+                if os.path.isabs(env_model_path):
+                    checkpoint_path = env_model_path
+                else:
+                    checkpoint_path = os.path.join(models_dir, env_model_path)
+                print(f"Using model from MODEL_PATH env var: {checkpoint_path}")
     
     # Load model if checkpoint exists
     if checkpoint_path and os.path.exists(checkpoint_path):
