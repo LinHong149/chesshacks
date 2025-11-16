@@ -86,6 +86,38 @@ def train_pgn_model(epochs: int = 5, batch_size: int = 512, learning_rate: float
         volume.commit()
         print(f"Saved to {checkpoint_path}")
 
+
+@app.function(
+    image=image,
+    volumes={"/models": volume},
+    timeout=300,
+)
+def list_model_files():
+    """List all files in the model volume."""
+    import os
+    files = []
+    if os.path.exists("/models"):
+        files = [f for f in os.listdir("/models") if f.endswith('.pth')]
+    return sorted(files)
+
+
+@app.function(
+    image=image,
+    volumes={"/models": volume},
+    timeout=600,
+)
+def download_model_file(filename: str):
+    """Download a model file from volume and return its contents."""
+    import os
+    file_path = f"/models/{filename}"
+    
+    if not os.path.exists(file_path):
+        return None
+    
+    with open(file_path, "rb") as f:
+        return f.read()
+
+
 @app.local_entrypoint()
 def main(epochs: int = 5, batch_size: int = 512, learning_rate: float = 1e-4):
     train_pgn_model.remote(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate)

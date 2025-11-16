@@ -9,62 +9,66 @@ Usage:
     python download_pgn_model.py --all                     # Download all checkpoints
 """
 
-import subprocess
 import sys
 import os
 import argparse
 import re
 
+try:
+    import modal
+except ImportError:
+    print("Error: Modal package not installed. Install with: pip install modal")
+    sys.exit(1)
+
 
 def list_checkpoints():
-    """List all available checkpoints using Modal CLI."""
+    """List all available checkpoints using Modal API."""
     print("Fetching checkpoint list from Modal volume 'chess-pgn-models'...")
     
-    # Use Modal CLI to list files in volume
-    result = subprocess.run(
-        ["modal", "volume", "ls", "chess-pgn-models"],
-        capture_output=True,
-        text=True
-    )
-    
-    if result.returncode == 0:
-        files = result.stdout.strip().split('\n')
-        checkpoint_files = [f for f in files if f.endswith('.pth')]
+    try:
+        app = modal.App.lookup("chess-pgn-train")
+        files = app.list_model_files.remote()
         
-        if checkpoint_files:
+        if files:
             print("\nAvailable checkpoints:")
-            for f in sorted(checkpoint_files):
+            for f in files:
                 print(f"  - {f}")
         else:
             print("No checkpoint files found in volume.")
-        return checkpoint_files
-    else:
-        print("Error listing checkpoints:", result.stderr, file=sys.stderr)
+        
+        return files
+    except Exception as e:
+        print(f"Error listing checkpoints: {e}", file=sys.stderr)
+        print("Make sure you're authenticated with Modal: modal token new")
         return []
 
 
 def download_checkpoint(checkpoint_name: str, local_dir: str = "./models"):
     """Download a specific checkpoint from Modal volume."""
     os.makedirs(local_dir, exist_ok=True)
+    local_path = os.path.join(local_dir, checkpoint_name)
     
     print(f"Downloading {checkpoint_name} to {local_dir}/...")
-    result = subprocess.run(
-        [
-            "modal", "volume", "download",
-            "chess-pgn-models",
-            checkpoint_name,
-            local_dir
-        ],
-        capture_output=True,
-        text=True
-    )
     
-    if result.returncode == 0:
-        print(f"✓ Successfully downloaded {checkpoint_name} to {local_dir}/")
+    try:
+        app = modal.App.lookup("chess-pgn-train")
+        file_data = app.download_model_file.remote(checkpoint_name)
+        
+        if file_data is None:
+            print(f"✗ Checkpoint {checkpoint_name} not found in volume")
+            return False
+        
+        # Write file
+        with open(local_path, "wb") as f:
+            f.write(file_data)
+        
+        size = os.path.getsize(local_path)
+        size_mb = size / (1024 * 1024)
+        print(f"✓ Successfully downloaded {checkpoint_name} ({size_mb:.1f} MB) to {local_dir}/")
         return True
-    else:
-        print(f"✗ Failed to download {checkpoint_name}")
-        print(result.stderr, file=sys.stderr)
+    except Exception as e:
+        print(f"✗ Failed to download {checkpoint_name}: {e}", file=sys.stderr)
+        print("Make sure you're authenticated with Modal: modal token new")
         return False
 
 
