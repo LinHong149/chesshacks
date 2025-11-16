@@ -54,7 +54,8 @@ def process_pgn_files():
     
     total_positions = 0
     file_counter = 0
-    batch_size = 1000  # Save in batches to reduce file count
+
+    batch_size = 50000  # Save in batches to reduce file count (50k positions per file)
     batch_data = []
     
     for pgn_file in pgn_files:
