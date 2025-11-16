@@ -20,27 +20,45 @@ except ImportError:
     print("Error: Modal package not installed. Install with: pip install modal")
     sys.exit(1)
 
+# Create Modal app for downloading
+download_app = modal.App("chess-model-download")
+volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
+
+# Define Modal functions at module level
+@download_app.function(
+    volumes={"/models": volume},
+    timeout=60,
+)
+def list_files():
+    """List all .pth files in the volume."""
+    import os
+    files = []
+    if os.path.exists("/models"):
+        files = [f for f in os.listdir("/models") if f.endswith('.pth')]
+    return sorted(files)
+
+
+@download_app.function(
+    volumes={"/models": volume},
+    timeout=600,  # 10 minutes for large files
+)
+def download_file(filename: str):
+    """Download a file from the volume and return its contents."""
+    import os
+    file_path = f"/models/{filename}"
+    
+    if not os.path.exists(file_path):
+        return None
+    
+    with open(file_path, "rb") as f:
+        return f.read()
+
 
 def list_checkpoints():
     """List all available checkpoints using Modal API."""
     print("Fetching checkpoint list from Modal volume 'chess-pgn-models'...")
     
     try:
-        # Create a temporary Modal app to access the volume
-        temp_app = modal.App("temp-download")
-        volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
-        
-        @temp_app.function(
-            volumes={"/models": volume},
-            timeout=60,
-        )
-        def list_files():
-            import os
-            files = []
-            if os.path.exists("/models"):
-                files = [f for f in os.listdir("/models") if f.endswith('.pth')]
-            return sorted(files)
-        
         files = list_files.remote()
         
         if files:
@@ -68,24 +86,6 @@ def download_checkpoint(checkpoint_name: str, local_dir: str = "./models"):
     print(f"Downloading {checkpoint_name} to {local_dir}/...")
     
     try:
-        # Create a temporary Modal app to access the volume
-        temp_app = modal.App("temp-download")
-        volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
-        
-        @temp_app.function(
-            volumes={"/models": volume},
-            timeout=600,  # 10 minutes for large files
-        )
-        def download_file(filename: str):
-            import os
-            file_path = f"/models/{filename}"
-            
-            if not os.path.exists(file_path):
-                return None
-            
-            with open(file_path, "rb") as f:
-                return f.read()
-        
         file_data = download_file.remote(checkpoint_name)
         
         if file_data is None:
