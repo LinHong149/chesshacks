@@ -6,8 +6,12 @@ Converts games into board-move pairs saved as .pt files.
 
 import sys
 import os
+
+# Import chess first (lightweight)
 import chess
 import chess.pgn
+
+# Import torch before importing board_encoding (which needs it)
 import torch
 from tqdm import tqdm
 
@@ -50,6 +54,8 @@ def process_pgn_files():
     
     total_positions = 0
     file_counter = 0
+    batch_size = 1000  # Save in batches to reduce file count
+    batch_data = []
     
     for pgn_file in pgn_files:
         print(f"\nProcessing: {os.path.basename(pgn_file)}")
@@ -90,20 +96,31 @@ def process_pgn_files():
                 
                 move_idx = move_index_map[move_uci]
                 
-                # Save as .pt file
-                output_file = os.path.join(PROCESSED_DIR, f"pos_{file_counter:08d}.pt")
-                torch.save({
+                # Add to batch
+                batch_data.append({
                     "board": board_tensor,
                     "move": move_idx
-                }, output_file)
+                })
                 
-                file_counter += 1
+                # Save batch when it reaches batch_size
+                if len(batch_data) >= batch_size:
+                    output_file = os.path.join(PROCESSED_DIR, f"batch_{file_counter:06d}.pt")
+                    torch.save(batch_data, output_file)
+                    batch_data = []
+                    file_counter += 1
+                
                 positions_in_file += 1
                 total_positions += 1
                 
                 board.push(move)
         
         print(f"  Extracted {positions_in_file} positions from {os.path.basename(pgn_file)}")
+    
+    # Save remaining batch
+    if batch_data:
+        output_file = os.path.join(PROCESSED_DIR, f"batch_{file_counter:06d}.pt")
+        torch.save(batch_data, output_file)
+        print(f"  Saved final batch with {len(batch_data)} positions")
     
     print(f"\n✓ Processed {total_positions} total positions")
     print(f"✓ Saved to {PROCESSED_DIR}")
