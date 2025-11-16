@@ -14,98 +14,154 @@ import os
 import argparse
 import re
 
+import subprocess
+
+# Modal app for downloading (defined at module level to avoid decorator issues)
 try:
     import modal
-except ImportError:
-    print("Error: Modal package not installed. Install with: pip install modal")
-    sys.exit(1)
-
-# Create Modal app for downloading
-download_app = modal.App("chess-model-download")
-volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
-
-# Define Modal functions at module level
-@download_app.function(
-    volumes={"/models": volume},
-    timeout=60,
-)
-def list_files():
-    """List all .pth files in the volume."""
-    import os
-    files = []
-    if os.path.exists("/models"):
-        files = [f for f in os.listdir("/models") if f.endswith('.pth')]
-    return sorted(files)
-
-
-@download_app.function(
-    volumes={"/models": volume},
-    timeout=600,  # 10 minutes for large files
-)
-def download_file(filename: str):
-    """Download a file from the volume and return its contents."""
-    import os
-    file_path = f"/models/{filename}"
+    download_app = modal.App("temp-download-helper")
+    download_volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
     
-    if not os.path.exists(file_path):
+    @download_app.function(volumes={"/models": download_volume}, timeout=600)
+    def get_file_from_volume(filename: str):
+        """Download a file from the volume."""
+        import os
+        path = f"/models/{filename}"
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f.read()
         return None
-    
-    with open(file_path, "rb") as f:
-        return f.read()
+except ImportError:
+    modal = None
+    download_app = None
 
 
 def list_checkpoints():
-    """List all available checkpoints using Modal API."""
+    """List all available checkpoints using Modal CLI or Python API."""
     print("Fetching checkpoint list from Modal volume 'chess-pgn-models'...")
     
+    # Try CLI first
     try:
-        files = list_files.remote()
+        result = subprocess.run(
+            ["modal", "volume", "ls", "chess-pgn-models"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        if result.returncode == 0:
+            # Parse the output to extract .pth files
+            lines = result.stdout.strip().split('\n')
+            checkpoint_files = []
+            
+            for line in lines:
+                if '.pth' in line:
+                    parts = line.split()
+                    if parts and parts[0].endswith('.pth'):
+                        checkpoint_files.append(parts[0])
+            
+            if checkpoint_files:
+                print("\nAvailable checkpoints:")
+                for f in sorted(checkpoint_files):
+                    print(f"  - {f}")
+                return sorted(checkpoint_files)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    
+    # Fallback to Python API
+    try:
+        import modal
+        app = modal.App.lookup("chess-model-download")
+        files = app.list_files.remote()
         
         if files:
             print("\nAvailable checkpoints:")
             for f in files:
                 print(f"  - {f}")
-        else:
-            print("No checkpoint files found in volume.")
-        
-        return files
+            return files
     except Exception as e:
-        print(f"Error listing checkpoints: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         print("\nTroubleshooting:")
         print("1. Make sure you're authenticated: modal token new")
-        print("2. Make sure the volume exists and has files")
-        print("3. Try: modal volume ls chess-pgn-models")
-        return []
+        print("2. Deploy the download app: modal deploy modal_download.py")
+        print("3. Or use CLI: modal volume ls chess-pgn-models")
+    
+    print("No checkpoints found.")
+    return []
 
 
 def download_checkpoint(checkpoint_name: str, local_dir: str = "./models"):
-    """Download a specific checkpoint from Modal volume."""
+    """Download a specific checkpoint from Modal volume using CLI."""
     os.makedirs(local_dir, exist_ok=True)
-    local_path = os.path.join(local_dir, checkpoint_name)
     
     print(f"Downloading {checkpoint_name} to {local_dir}/...")
     
     try:
-        file_data = download_file.remote(checkpoint_name)
+        # Use Modal CLI to download file
+        # Format: modal volume download <volume> <remote_path> <local_path>
+        result = subprocess.run(
+            [
+                "modal", "volume", "download",
+                "chess-pgn-models",
+                checkpoint_name,
+                local_dir
+            ],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        if result.returncode != 0:
+            # CLI download doesn't exist, use modal run instead
+            print("Modal CLI 'volume download' not available, using modal run...")
+            return download_via_modal_run(checkpoint_name, local_dir)
+        
+        local_path = os.path.join(local_dir, checkpoint_name)
+        if os.path.exists(local_path):
+            size = os.path.getsize(local_path)
+            size_mb = size / (1024 * 1024)
+            print(f"✓ Successfully downloaded {checkpoint_name} ({size_mb:.1f} MB) to {local_dir}/")
+            return True
+        else:
+            print(f"✗ File not found after download")
+            return False
+            
+    except FileNotFoundError:
+        print("Error: Modal CLI not found.", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"✗ Failed to download {checkpoint_name}: {e}", file=sys.stderr)
+        return False
+
+
+def download_via_modal_run(checkpoint_name: str, local_dir: str):
+    """Download using Modal Python API."""
+    if modal is None or download_app is None:
+        print("✗ Modal not available")
+        return False
+    
+    print("Using Modal Python API to download...")
+    
+    try:
+        file_data = get_file_from_volume.remote(checkpoint_name)
         
         if file_data is None:
-            print(f"✗ Checkpoint {checkpoint_name} not found in volume")
+            print(f"✗ File not found in volume")
             return False
         
-        # Write file
+        local_path = os.path.join(local_dir, checkpoint_name)
         with open(local_path, "wb") as f:
             f.write(file_data)
         
         size = os.path.getsize(local_path)
         size_mb = size / (1024 * 1024)
-        print(f"✓ Successfully downloaded {checkpoint_name} ({size_mb:.1f} MB) to {local_dir}/")
+        print(f"✓ Successfully downloaded {checkpoint_name} ({size_mb:.1f} MB)")
         return True
+        
     except Exception as e:
-        print(f"✗ Failed to download {checkpoint_name}: {e}", file=sys.stderr)
-        print("\nTroubleshooting:")
-        print("1. Make sure you're authenticated: modal token new")
-        print("2. Make sure the file exists in the volume")
-        print("3. Check your internet connection")
+        print(f"✗ Download failed: {e}", file=sys.stderr)
         return False
 
 
