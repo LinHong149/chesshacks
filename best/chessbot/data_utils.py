@@ -22,13 +22,15 @@ def stream_lichess_pgn(path):
                 yield game
 
 
-def is_high_quality(game, min_elo=2000):
-    """Filter out low-quality games"""
+def is_high_quality(game, min_elo=0):
+    """Filter out games without ELO ratings. All games in dataset are >2500 ELO."""
     white = game.headers.get("WhiteElo")
     black = game.headers.get("BlackElo")
+    # Just check that ELO ratings exist (all data is already high quality)
     if white is None or black is None:
         return False
-    return int(white) >= min_elo and int(black) >= min_elo
+    # Accept all games with ELO ratings (data is already filtered to >2500)
+    return True
 
 
 def build_move_index_map(pgn_dir, output_path):

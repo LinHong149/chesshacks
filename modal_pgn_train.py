@@ -75,16 +75,38 @@ def train_pgn_model(epochs: int = 5, batch_size: int = 512, learning_rate: float
         avg_loss = total_loss / len(loader)
         print(f"Epoch {epoch+1}/{epochs}: loss={avg_loss:.4f}")
         
-        # Save checkpoint
+        # Save checkpoint (always save, but mark best)
         checkpoint_path = f"/models/chessbot_policy_epoch_{epoch+1}.pth"
+        is_best = avg_val_loss < best_val_loss
+        if is_best:
+            best_val_loss = avg_val_loss
+        
         torch.save({
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
-            'loss': avg_loss,
+            'optimizer_state_dict': opt.state_dict(),
+            'train_loss': avg_train_loss,
+            'val_loss': avg_val_loss,
             'num_moves': num_moves,
+            'learning_rate': current_lr,
         }, checkpoint_path)
         volume.commit()
-        print(f"Saved to {checkpoint_path}")
+        
+        if is_best:
+            # Also save as best model
+            best_path = "/models/chessbot_policy_best.pth"
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
+                'num_moves': num_moves,
+            }, best_path)
+            volume.commit()
+            print(f"✓ Saved best model (val_loss={avg_val_loss:.4f}) to {best_path}")
+        else:
+            print(f"Saved checkpoint to {checkpoint_path}")
 
 
 @app.function(
@@ -119,5 +141,11 @@ def download_model_file(filename: str):
 
 
 @app.local_entrypoint()
-def main(epochs: int = 5, batch_size: int = 512, learning_rate: float = 1e-4):
+def main(epochs: int = 30, batch_size: int = 1024, learning_rate: float = 5e-5):
+    """
+    Train with improved defaults:
+    - epochs: 30 (more training)
+    - batch_size: 1024 (larger batches)
+    - learning_rate: 5e-5 (lower, more stable)
+    """
     train_pgn_model.remote(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate)

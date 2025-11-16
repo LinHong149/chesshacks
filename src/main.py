@@ -5,75 +5,64 @@ import sys
 import torch
 import time
 
-# Add model directory to path
+# Add paths for both model directories
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'best'))
 
-# Import AlphaZero model components
-from model.main import (
-    AlphaZeroNet,
-    encode_board,
-    move_to_action_index,
-    action_index_to_move,
-    legal_moves_mask,
-    mcts_search,
-    MCTSNode,
-    CHANNELS,
-    NUM_RES_BLOCKS,
-    MCTS_SIMULATIONS,
-)
+# Import PGN-based model
+from chessbot.inference import ChessBot
 
 # Global model instance (loaded once)
-_model = None
-_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_bot = None
+_device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def load_model(checkpoint_path: str = None):
     """
-    Load the trained AlphaZero model.
+    Load the trained PGN model.
     
     Args:
-        checkpoint_path: Path to checkpoint file. If None, tries to find latest in checkpoints/
+        checkpoint_path: Path to checkpoint file. If None, tries to find latest in models/
     """
-    global _model
+    global _bot
     
-    if _model is not None:
-        return _model
-    
-    # Initialize model
-    _model = AlphaZeroNet(
-        in_channels=13,
-        channels=CHANNELS,
-        num_res_blocks=NUM_RES_BLOCKS
-    ).to(_device)
+    if _bot is not None:
+        return _bot
     
     # Find checkpoint if not provided
     if checkpoint_path is None:
-        checkpoints_dir = os.path.join(os.path.dirname(__file__), '..', 'checkpoints')
-        if os.path.exists(checkpoints_dir):
+        models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
+        if os.path.exists(models_dir):
             checkpoint_files = [
-                f for f in os.listdir(checkpoints_dir) 
-                if f.startswith('alphazero_chess_iter_') and f.endswith('.pt')
+                f for f in os.listdir(models_dir) 
+                if f.startswith('chessbot_policy_epoch_') and f.endswith('.pth')
             ]
             if checkpoint_files:
-                # Get latest checkpoint
-                checkpoint_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-                checkpoint_path = os.path.join(checkpoints_dir, checkpoint_files[-1])
+                # Get latest checkpoint (highest epoch number)
+                def get_epoch(filename):
+                    try:
+                        return int(filename.split('epoch_')[1].split('.')[0])
+                    except:
+                        return 0
+                checkpoint_files.sort(key=get_epoch, reverse=True)
+                checkpoint_path = os.path.join(models_dir, checkpoint_files[0])
                 print(f"Auto-detected checkpoint: {checkpoint_path}")
     
-    # Load checkpoint if available
+    # Load model if checkpoint exists
     if checkpoint_path and os.path.exists(checkpoint_path):
-        print(f"Loading model from {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=_device)
-        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-            _model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            _model.load_state_dict(checkpoint)
-        _model.eval()
-        print("✓ Model loaded successfully")
+        print(f"Loading PGN model from {checkpoint_path}")
+        try:
+            _bot = ChessBot(checkpoint_path, device=_device)
+            print("✓ Model loaded successfully")
+        except Exception as e:
+            print(f"⚠ Error loading model: {e}")
+            _bot = None
     else:
-        print("⚠ No checkpoint found, using untrained model")
-        _model.eval()
+        print("⚠ No checkpoint found")
+        print(f"  Expected path: {checkpoint_path}")
+        print(f"  Or place model in: {os.path.join(os.path.dirname(__file__), '..', 'models')}")
+        _bot = None
     
-    return _model
+    return _bot
 
 
 # Load model on import (runs once)
@@ -85,69 +74,74 @@ except Exception as e:
 
 
 @chess_manager.entrypoint
-def alphazero_move(ctx: GameContext):
+def pgn_model_move(ctx: GameContext):
     """
-    Use trained AlphaZero model to make a move.
+    Use trained PGN model to make a move.
     """
-    global _model
+    global _bot
     
-    # Fallback to random if model not loaded
-    if _model is None:
-        legal_moves = list(ctx.board.generate_legal_moves())
-        if not legal_moves:
-            ctx.logProbabilities({})
-            raise ValueError("No legal moves available")
-        move_probs = {move: 1.0 / len(legal_moves) for move in legal_moves}
-        ctx.logProbabilities(move_probs)
-        return legal_moves[0]
-    
-    # Calculate time budget for MCTS
-    # Use a portion of remaining time, but cap at reasonable limit
-    time_budget_ms = min(ctx.timeLeft * 0.1, 5000)  # Use 10% of time, max 5 seconds
-    num_simulations = min(MCTS_SIMULATIONS, int(time_budget_ms / 10))  # ~10ms per simulation
-    
-    if num_simulations < 10:
-        num_simulations = 10  # Minimum simulations
-    
-    print(f"Using {num_simulations} MCTS simulations (time budget: {time_budget_ms:.0f}ms)")
-    
-    # Run MCTS to get move probabilities
-    start_time = time.perf_counter()
-    
-    # Create root node and run MCTS
-    root = MCTSNode(ctx.board.copy())
-    policy_target = mcts_search(root, _model, num_simulations=num_simulations)
-    
-    # Convert policy to move probabilities
     legal_moves = list(ctx.board.generate_legal_moves())
     if not legal_moves:
         ctx.logProbabilities({})
         raise ValueError("No legal moves available")
     
-    move_probs = {}
-    for move in legal_moves:
-        action_idx = move_to_action_index(move)
-        prob = policy_target[action_idx].item()
-        move_probs[move] = prob
-    
-    # Normalize probabilities
-    total_prob = sum(move_probs.values())
-    if total_prob > 0:
-        move_probs = {move: prob / total_prob for move, prob in move_probs.items()}
-    else:
-        # Fallback: uniform distribution
+    # Fallback to random if model not loaded
+    if _bot is None:
         move_probs = {move: 1.0 / len(legal_moves) for move in legal_moves}
+        ctx.logProbabilities(move_probs)
+        return legal_moves[0]
     
-    # Log probabilities
-    ctx.logProbabilities(move_probs)
+    # Use PGN model to get move
+    start_time = time.perf_counter()
     
-    # Select best move (highest probability)
-    best_move = max(move_probs.items(), key=lambda x: x[1])[0]
-    
-    elapsed = (time.perf_counter() - start_time) * 1000
-    print(f"Move selected in {elapsed:.1f}ms: {best_move.uci()}")
-    
-    return best_move
+    try:
+        # Get model's move choice
+        best_move = _bot.choose_move(ctx.board)
+        
+        # Get move probabilities for logging
+        # The model outputs logits, we can convert to probabilities
+        with torch.no_grad():
+            from chessbot.board_encoding import board_to_tensor
+            board_tensor = board_to_tensor(ctx.board).unsqueeze(0)
+            if _device == "cuda" and torch.cuda.is_available():
+                board_tensor = board_tensor.cuda()
+            
+            logits = _bot.model(board_tensor)[0].cpu()
+            
+            # Convert to probabilities (softmax)
+            import torch.nn.functional as F
+            probs = F.softmax(logits, dim=0)
+            
+            # Create move probability dict for legal moves
+            move_probs = {}
+            for move in legal_moves:
+                move_uci = move.uci()
+                if move_uci in _bot.move_index_map:
+                    move_idx = _bot.move_index_map[move_uci]
+                    move_probs[move] = probs[move_idx].item()
+            
+            # Normalize probabilities
+            total_prob = sum(move_probs.values())
+            if total_prob > 0:
+                move_probs = {move: prob / total_prob for move, prob in move_probs.items()}
+            else:
+                # Fallback: uniform distribution
+                move_probs = {move: 1.0 / len(legal_moves) for move in legal_moves}
+        
+        # Log probabilities
+        ctx.logProbabilities(move_probs)
+        
+        elapsed = (time.perf_counter() - start_time) * 1000
+        print(f"Move selected in {elapsed:.1f}ms: {best_move.uci()}")
+        
+        return best_move
+        
+    except Exception as e:
+        print(f"⚠ Error getting move from model: {e}")
+        # Fallback to random
+        move_probs = {move: 1.0 / len(legal_moves) for move in legal_moves}
+        ctx.logProbabilities(move_probs)
+        return legal_moves[0]
 
 
 @chess_manager.reset
@@ -155,5 +149,5 @@ def reset_model(ctx: GameContext):
     """
     Reset any cached state when a new game begins.
     """
-    # Model doesn't need reset, but you could clear caches here if needed
+    # PGN model doesn't need reset, but you could clear caches here if needed
     pass
