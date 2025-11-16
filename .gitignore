@@ -7,5 +7,4 @@ devtools
 /devtools
 /best/chessbot/data
 /best/chessbot/processed
-/models/v1.pth
-/models/v2.pth
+/models

@@ -33,22 +33,30 @@ def load_model(checkpoint_path: str = None):
         models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
         if os.path.exists(models_dir):
             # Priority order:
-            # 1. v2.pth (if exists)
-            # 2. v1.pth (if exists)
-            # 3. Latest epoch checkpoint
-            # 4. Environment variable MODEL_PATH
+            # 1. v3.pth (if exists)
+            # 2. v2.pth (if exists)
+            # 3. v1.pth (if exists)
+            # 4. Latest epoch checkpoint
+            # 5. Environment variable MODEL_PATH
+            # 6. Hugging Face (if configured)
             
-            # Check for v2.pth first
-            v2_path = os.path.join(models_dir, 'v2.pth')
-            if os.path.exists(v2_path):
-                checkpoint_path = v2_path
-                print(f"Auto-detected checkpoint: {checkpoint_path} (v2)")
+            # Check for v3.pth first (latest model)
+            v3_path = os.path.join(models_dir, 'v3.pth')
+            if os.path.exists(v3_path):
+                checkpoint_path = v3_path
+                print(f"Auto-detected checkpoint: {checkpoint_path} (v3)")
             else:
-                # Check for v1.pth
-                v1_path = os.path.join(models_dir, 'v1.pth')
-                if os.path.exists(v1_path):
-                    checkpoint_path = v1_path
-                    print(f"Auto-detected checkpoint: {checkpoint_path} (v1)")
+                # Check for v2.pth
+                v2_path = os.path.join(models_dir, 'v2.pth')
+                if os.path.exists(v2_path):
+                    checkpoint_path = v2_path
+                    print(f"Auto-detected checkpoint: {checkpoint_path} (v2)")
+                else:
+                    # Check for v1.pth
+                    v1_path = os.path.join(models_dir, 'v1.pth')
+                    if os.path.exists(v1_path):
+                        checkpoint_path = v1_path
+                        print(f"Auto-detected checkpoint: {checkpoint_path} (v1)")
                 else:
                     # Fall back to epoch-based naming
                     checkpoint_files = [
@@ -74,6 +82,31 @@ def load_model(checkpoint_path: str = None):
                 else:
                     checkpoint_path = os.path.join(models_dir, env_model_path)
                 print(f"Using model from MODEL_PATH env var: {checkpoint_path}")
+    
+    # Try downloading from Hugging Face if local file doesn't exist
+    # Default to public model if no env var is set
+    hf_model_id = os.getenv('HF_MODEL_ID', 'linhonk/chess-bot-v3')  # Public model on Hugging Face
+    if checkpoint_path is None or not os.path.exists(checkpoint_path):
+        print(f"Local model not found, attempting to download from Hugging Face: {hf_model_id}")
+        try:
+            from huggingface_hub import hf_hub_download
+            import tempfile
+            
+            # Download model file
+            downloaded_path = hf_hub_download(
+                repo_id=hf_model_id,
+                filename="v3.pth",  # or "pytorch_model.bin" or whatever you named it
+                cache_dir=models_dir,
+                local_dir=models_dir,
+                local_dir_use_symlinks=False
+            )
+            checkpoint_path = downloaded_path
+            print(f"✓ Downloaded model from Hugging Face: {checkpoint_path}")
+        except ImportError:
+            print("⚠ huggingface_hub not installed. Install with: pip install huggingface_hub")
+        except Exception as e:
+            print(f"⚠ Failed to download from Hugging Face: {e}")
+            print("  Falling back to local files or random moves")
     
     # Load model if checkpoint exists
     if checkpoint_path and os.path.exists(checkpoint_path):
