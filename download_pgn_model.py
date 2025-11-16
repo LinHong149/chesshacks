@@ -26,8 +26,22 @@ def list_checkpoints():
     print("Fetching checkpoint list from Modal volume 'chess-pgn-models'...")
     
     try:
-        app = modal.App.lookup("chess-pgn-train")
-        files = app.list_model_files.remote()
+        # Create a temporary Modal app to access the volume
+        temp_app = modal.App("temp-download")
+        volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
+        
+        @temp_app.function(
+            volumes={"/models": volume},
+            timeout=60,
+        )
+        def list_files():
+            import os
+            files = []
+            if os.path.exists("/models"):
+                files = [f for f in os.listdir("/models") if f.endswith('.pth')]
+            return sorted(files)
+        
+        files = list_files.remote()
         
         if files:
             print("\nAvailable checkpoints:")
@@ -39,7 +53,10 @@ def list_checkpoints():
         return files
     except Exception as e:
         print(f"Error listing checkpoints: {e}", file=sys.stderr)
-        print("Make sure you're authenticated with Modal: modal token new")
+        print("\nTroubleshooting:")
+        print("1. Make sure you're authenticated: modal token new")
+        print("2. Make sure the volume exists and has files")
+        print("3. Try: modal volume ls chess-pgn-models")
         return []
 
 
@@ -51,8 +68,25 @@ def download_checkpoint(checkpoint_name: str, local_dir: str = "./models"):
     print(f"Downloading {checkpoint_name} to {local_dir}/...")
     
     try:
-        app = modal.App.lookup("chess-pgn-train")
-        file_data = app.download_model_file.remote(checkpoint_name)
+        # Create a temporary Modal app to access the volume
+        temp_app = modal.App("temp-download")
+        volume = modal.Volume.from_name("chess-pgn-models", create_if_missing=False)
+        
+        @temp_app.function(
+            volumes={"/models": volume},
+            timeout=600,  # 10 minutes for large files
+        )
+        def download_file(filename: str):
+            import os
+            file_path = f"/models/{filename}"
+            
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, "rb") as f:
+                return f.read()
+        
+        file_data = download_file.remote(checkpoint_name)
         
         if file_data is None:
             print(f"✗ Checkpoint {checkpoint_name} not found in volume")
@@ -68,7 +102,10 @@ def download_checkpoint(checkpoint_name: str, local_dir: str = "./models"):
         return True
     except Exception as e:
         print(f"✗ Failed to download {checkpoint_name}: {e}", file=sys.stderr)
-        print("Make sure you're authenticated with Modal: modal token new")
+        print("\nTroubleshooting:")
+        print("1. Make sure you're authenticated: modal token new")
+        print("2. Make sure the file exists in the volume")
+        print("3. Check your internet connection")
         return False
 
 
